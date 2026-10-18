@@ -442,6 +442,10 @@ juce::File FxController::getFactoryPresetDir()
 	// 3) Standard system prefixes.
 	for (auto* p : { "/usr/share/fxsound/Factsoft", "/usr/local/share/fxsound/Factsoft" })
 		if (File(p).isDirectory()) return File(p);
+#ifdef FXSOUND_SOURCE_PRESET_DIR
+	// 4) Uninstalled build run from anywhere: the source tree's presets.
+	if (File(FXSOUND_SOURCE_PRESET_DIR).isDirectory()) return File(FXSOUND_SOURCE_PRESET_DIR);
+#endif
 
 	return cwd; // fall back (may be empty)
 }
@@ -1556,6 +1560,21 @@ void FxController::onSoundDeviceChange(std::vector<SoundDevice> sound_devices)
 // Handled when FxSound processing is off
 void FxController::onSoundDeviceChange()
 {
+#ifndef _WIN32
+	// The PipeWire backend reports every device change through this overload,
+	// from its loop thread and whatever the power state. Handle it on the
+	// message thread, using the power-on path when processing is running.
+	if (!juce::MessageManager::getInstance()->isThisTheMessageThread())
+	{
+		juce::MessageManager::callAsync([this] {
+			if (isTimerRunning())
+				onSoundDeviceChange(audio_passthru_->getSoundDevices(false));
+			else
+				onSoundDeviceChange();
+		});
+		return;
+	}
+#endif
 	if (!isTimerRunning())
 	{
 		ScopedLock auto_lock(lock_);
